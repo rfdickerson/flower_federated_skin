@@ -1,15 +1,16 @@
+import warnings
 
 import torch
 import torchvision
 from torchvision import transforms
 from torchvision import datasets
-from tqdm import tqdm
 import torch.backends.cudnn as cudnn
 from torch import nn
 import os
 import torch.nn.functional as F
 import numpy as np
 from collections import OrderedDict
+from tqdm.rich import tqdm
 
 import flwr as fl
 
@@ -20,7 +21,10 @@ momentum = 0.9
 epochs = 1
 
 DATASET_DIR = "~/Dropbox/machine-learning/dataset"
-DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+#DATASET_DIR = 'C:/Users/rfdic/Dropbox/machine-learning/dataset'
+
+warnings.filterwarnings("ignore", category=UserWarning)
+DEVICE = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
 def load_data():
 
@@ -47,19 +51,16 @@ def load_data():
 
     train_loader = torch.utils.data.DataLoader(
             train_dataset,
-            batch_size=batch_size, shuffle=True,
-            num_workers=workers, pin_memory=True)
+            batch_size=batch_size, shuffle=True)
 
     valid_loader = torch.utils.data.DataLoader(
         val_dataset,
-        batch_size=batch_size, shuffle=True,
-        num_workers=workers, pin_memory=True
+        batch_size=batch_size, shuffle=True
     )
 
     test_loader = torch.utils.data.DataLoader(
         test_dataset,
-        batch_size=batch_size, shuffle=True,
-        num_workers=workers, pin_memory=True
+        batch_size=batch_size, shuffle=True
     )
 
     return train_loader, valid_loader, test_loader
@@ -71,7 +72,7 @@ def build_model():
         param.requires_grad = False
 
     fc = nn.Sequential(
-        nn.Linear(in_features=1792, out_features=625),
+        nn.Linear(in_features=1280, out_features=625),
         nn.ReLU(),
         nn.Dropout(0.3),
         # nn.BatchNorm1d(625),
@@ -87,10 +88,10 @@ def build_model():
 def train(net, trainloader, epochs):
     """Train the model on the training set."""
     criterion = nn.CrossEntropyLoss()
-    optimizer = torch.optim.SGD(net.classifier.parameters(), lr=0.001, momentum=0.9)
+    optimizer = torch.optim.SGD(net.parameters(), lr=0.001, momentum=0.9)
 
     for _ in range(epochs):
-        for images, labels in trainloader:
+        for images, labels in tqdm(trainloader):
             images, labels = images.to(DEVICE), labels.to(DEVICE)
             optimizer.zero_grad()
             loss = criterion(net(images), labels)
@@ -103,8 +104,8 @@ def test(net, testloader):
     criterion = torch.nn.CrossEntropyLoss()
     correct, total, loss = 0, 0, 0.0
     with torch.no_grad():
-        for data in testloader:
-            images, labels = data[0].to(DEVICE), data[1].to(DEVICE)
+        for images, labels in tqdm(testloader):
+            images, labels = images.to(DEVICE), labels.to(DEVICE)
             outputs = net(images)
             loss += criterion(outputs, labels).item()
             _, predicted = torch.max(outputs.data, 1)
@@ -112,6 +113,7 @@ def test(net, testloader):
             correct += (predicted == labels).sum().item()
     accuracy = correct / total
     return loss, accuracy
+
 
 net = build_model().to(DEVICE)
 train_loader, valid_loader, test_loader = load_data()
