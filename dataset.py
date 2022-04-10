@@ -5,6 +5,7 @@ import torch.utils.data
 from torch.utils.data import DataLoader
 from torchvision import transforms, datasets
 
+
 def load_data(dataset_dir, batch_size=32) -> Tuple[
     torch.utils.data.DataLoader, torch.utils.data.DataLoader, Dict
 ]:
@@ -13,6 +14,9 @@ def load_data(dataset_dir, batch_size=32) -> Tuple[
                                      std=[0.229, 0.224, 0.225])
 
     train_dataset = datasets.ImageFolder(os.path.join(dataset_dir, 'train'), transforms.Compose([
+        transforms.RandomHorizontalFlip(p=0.5),
+        transforms.RandomVerticalFlip(p=0.5),
+        transforms.ColorJitter(brightness=0.1, contrast=0.2, saturation=0, hue=0),
         transforms.RandomRotation(degrees=(-20,+20)),
         transforms.ToTensor(),
         normalize,

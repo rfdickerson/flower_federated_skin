@@ -27,10 +27,11 @@ def build_model() -> nn.Module:
     # create the classification layer
     fc = nn.Sequential(
         nn.Linear(in_features=1280, out_features=625),
+        nn.BatchNorm1d(625),
         nn.ReLU(),
         nn.Dropout(0.3),
         nn.Linear(in_features=625, out_features=256),
-        # nn.BatchNorm1d(256),
+        nn.BatchNorm1d(256),
         nn.ReLU(),
         nn.Linear(in_features=256, out_features=7),
     )
