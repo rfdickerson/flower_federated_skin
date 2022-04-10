@@ -1,142 +1,88 @@
 import warnings
-
-import torch
-import torchvision
-from torchvision import transforms
-from torchvision import datasets
-import torch.backends.cudnn as cudnn
-from torch import nn
-import os
-import torch.nn.functional as F
-import numpy as np
 from collections import OrderedDict
-from tqdm.rich import tqdm
+import os
+from pathlib import Path
+from collections import OrderedDict
+from typing import Dict, List, Tuple
 
 import flwr as fl
+import numpy as np
+import torch
+from torch import nn
 
-batch_size = 32
-workers = 4
-lr = 0.001
-momentum = 0.9
-epochs = 1
+import efficientnet
+from dataset import load_data
+from efficientnet import build_model, train, test
 
-DATASET_DIR = "~/Dropbox/machine-learning/dataset"
-#DATASET_DIR = 'C:/Users/rfdic/Dropbox/machine-learning/dataset'
+USE_FEDBN: bool = True
+DATASET_DIR = os.path.join(Path.home(), "Dropbox/machine-learning/dataset")
+DEVICE: str = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
-warnings.filterwarnings("ignore", category=UserWarning)
-DEVICE = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-
-def load_data():
-
-    normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
-                                     std=[0.229, 0.224, 0.225])
-
-    train_dataset = datasets.ImageFolder(os.path.join(DATASET_DIR, 'train'), transforms.Compose([
-        transforms.RandomRotation(degrees=(-20,+20)),
-        transforms.ToTensor(),
-        normalize,
-    ]))
-
-    val_dataset = datasets.ImageFolder(os.path.join(DATASET_DIR, 'val'), transforms.Compose([
-        transforms.RandomRotation(degrees=(-20,+20)),
-        transforms.ToTensor(),
-        normalize,
-    ]))
-
-    test_dataset = datasets.ImageFolder(os.path.join(DATASET_DIR, 'test'), transforms.Compose([
-        transforms.RandomRotation(degrees=(-20,+20)),
-        transforms.ToTensor(),
-        normalize,
-    ]))
-
-    train_loader = torch.utils.data.DataLoader(
-            train_dataset,
-            batch_size=batch_size, shuffle=True)
-
-    valid_loader = torch.utils.data.DataLoader(
-        val_dataset,
-        batch_size=batch_size, shuffle=True
-    )
-
-    test_loader = torch.utils.data.DataLoader(
-        test_dataset,
-        batch_size=batch_size, shuffle=True
-    )
-
-    return train_loader, valid_loader, test_loader
-
-def build_model():
-    """create the CNN based on efficientnet"""
-    model_conv = torchvision.models.efficientnet_b0(pretrained=True)
-    for param in model_conv.parameters():
-        param.requires_grad = False
-
-    fc = nn.Sequential(
-        nn.Linear(in_features=1280, out_features=625),
-        nn.ReLU(),
-        nn.Dropout(0.3),
-        # nn.BatchNorm1d(625),
-        nn.Linear(in_features=625, out_features=256),
-        nn.ReLU(),
-        nn.Linear(in_features=256, out_features=7),
-    )
-
-    model_conv.classifier = fc
-    return model_conv
-
-
-def train(net, trainloader, epochs):
-    """Train the model on the training set."""
-    criterion = nn.CrossEntropyLoss()
-    optimizer = torch.optim.SGD(net.parameters(), lr=0.001, momentum=0.9)
-
-    for _ in range(epochs):
-        for images, labels in tqdm(trainloader):
-            images, labels = images.to(DEVICE), labels.to(DEVICE)
-            optimizer.zero_grad()
-            loss = criterion(net(images), labels)
-            loss.backward()
-            optimizer.step()
-
-
-def test(net, testloader):
-    """Validate the network on the entire test set"""
-    criterion = torch.nn.CrossEntropyLoss()
-    correct, total, loss = 0, 0, 0.0
-    with torch.no_grad():
-        for images, labels in tqdm(testloader):
-            images, labels = images.to(DEVICE), labels.to(DEVICE)
-            outputs = net(images)
-            loss += criterion(outputs, labels).item()
-            _, predicted = torch.max(outputs.data, 1)
-            total += labels.size(0)
-            correct += (predicted == labels).sum().item()
-    accuracy = correct / total
-    return loss, accuracy
-
-
-net = build_model().to(DEVICE)
-train_loader, valid_loader, test_loader = load_data()
-
-
+# Flower client
 class SkinLesionClient(fl.client.NumPyClient):
-    def get_parameters(self):
-        return [val.cpu().numpy() for _, val in net.state_dict().items()]
 
-    def set_parameters(self, parameters):
-        params_dict = zip(net.state_dict().keys(), parameters)
-        state_dict = OrderedDict({k: torch.tensor(v) for k, v in params_dict})
-        net.load_state_dict(state_dict, strict=True)
+    def __init__(self,
+                model: nn.Module,
+                trainloader: torch.utils.data.DataLoader,
+                testloader: torch.utils.data.DataLoader,
+                num_examples: Dict,
+    ) -> None:
+        self.model = model
+        self.trainloader = trainloader
+        self.testloader = testloader
+        self.num_examples = num_examples
 
-    def fit(self, parameters, config):
+    def get_parameters(self) -> List[np.ndarray]:
+        self.model.train()
+        if USE_FEDBN:
+            return [
+                val.cpu().numpy()
+                for name, val in self.model.state_dict().items()
+                if "bn" not in name
+            ]
+        else:
+            return [val.cpu().numpy() for _, val in self.model.state_dict().items()]
+
+    def set_parameters(self, parameters: List[np.ndarray]) -> None:
+        self.model.train()
+
+        if USE_FEDBN:
+            keys = [k for k in self.model.state_dict().keys() if "bn" not in k]
+            params_dict = zip(keys, parameters)
+            state_dict = OrderedDict({k: torch.tensor(v) for k, v in params_dict})
+            self.model.load_state_dict(state_dict, strict=False)
+        else:
+            params_dict = zip(self.model.state_dict().keys(), parameters)
+            state_dict = OrderedDict({k: torch.tensor(v) for k, v in params_dict})
+            self.model.load_state_dict(state_dict, strict=True)
+
+    def fit(
+            self, parameters: List[np.ndarray], config: Dict[str, str]):
+
         self.set_parameters(parameters)
-        train(net, train_loader, epochs=1)
-        return self.get_parameters(), len(train_loader.dataset), {}
+        train(self.model, self.trainloader, epochs=1, device=DEVICE)
+        return self.get_parameters(), self.num_examples["trainset"], {}
 
     def evaluate(self, parameters, config):
         self.set_parameters(parameters)
-        loss, accuracy = test(net, test_loader)
-        return loss, len(test_loader.dataset), {"accuracy": accuracy}
+        loss, accuracy = test(self.model, self.testloader, device=DEVICE)
+        return float(loss), self.num_examples["testset"], {"accuracy": accuracy}
 
 
-fl.client.start_numpy_client("[::]:8080", client=SkinLesionClient())
+
+def main() -> None:
+
+    trainloader, testloader, num_examples = load_data(DATASET_DIR)
+
+    model = efficientnet.build_model().to(DEVICE).train()
+
+    # Perform a single forward pass to properly initialize BatchNorm
+    _ = model(next(iter(trainloader))[0].to(DEVICE))
+
+    client = SkinLesionClient(model, trainloader, testloader, num_examples)
+
+    fl.client.start_numpy_client("[::]:8080", client)
+
+
+if __name__ == "__main__":
+    main()
