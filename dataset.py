@@ -36,11 +36,14 @@ def load_data(dataset_dir, batch_size=32) -> Tuple[
 
     train_loader = DataLoader(
             train_dataset,
-            batch_size=batch_size, shuffle=True)
+            batch_size=batch_size, shuffle=True,
+            pin_memory=True,
+    )
 
     valid_loader = DataLoader(
         val_dataset,
-        batch_size=batch_size, shuffle=True
+        batch_size=batch_size, shuffle=True,
+        pin_memory=True,
     )
 
     # test_loader = DataLoader(

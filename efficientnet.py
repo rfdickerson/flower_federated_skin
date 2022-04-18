@@ -20,11 +20,11 @@ def build_model() -> nn.Module:
     """create the CNN based on efficientnet"""
     model_conv = torchvision.models.efficientnet_b0(pretrained=True)
 
-    # fix the convolutional network parameters
+    # don't fit the convolutional network parameters
     for param in model_conv.parameters():
         param.requires_grad = False
 
-    # create the classification layer
+    # create a new classification layer
     fc = nn.Sequential(
         nn.Linear(in_features=1280, out_features=625),
         nn.BatchNorm1d(625),
