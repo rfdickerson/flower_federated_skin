@@ -7,6 +7,7 @@ from torch import nn
 from tqdm import tqdm
 from pathlib import Path
 
+import torch.backends.cudnn as cudnn
 from dataset import load_data
 
 DATASET_DIR = os.path.join(Path.home(), "Dropbox/machine-learning/dataset")
@@ -14,6 +15,8 @@ BATCH_SIZE = 32
 LR = 0.001
 MOMENTUM = 0.9
 EPOCHS = 1
+
+cudnn.benchmark = True
 
 
 def build_model() -> nn.Module:
@@ -54,14 +57,33 @@ def train(
     net.to(device)
     net.train()
 
-    for epoch in range(epochs):
+    for epoch in range(1, 5):
         running_loss = 0.0
-        for images, labels in tqdm(trainloader):
-            images, labels = images.to(device), labels.to(device)
-            optimizer.zero_grad()
-            loss = criterion(net(images), labels)
-            loss.backward()
-            optimizer.step()
+        running_corrects = 0
+
+        with tqdm(trainloader, unit="images") as tepoch:
+            for images, labels in tepoch:
+                tepoch.set_description(f"Epoch {epoch}")
+
+                images, labels = images.to(device), labels.to(device)
+
+                # zero the parameter gradients
+                optimizer.zero_grad()
+
+                outputs = net(images)
+                loss = criterion(outputs, labels)
+                loss.backward()
+                optimizer.step()
+
+                running_loss += loss.item()
+
+                pred = outputs.argmax(dim=1, keepdim=True) # get the index of max probability
+                running_corrects += pred.eq(labels.view_as(pred)).sum().item()
+
+        epoch_loss = running_loss / len(trainloader.dataset)
+        epoch_acc = running_corrects/ len(trainloader.dataset)
+
+        print(f'{epoch} Loss: {epoch_loss:.4f} Acc: {epoch_acc}')
 
 
 

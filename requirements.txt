@@ -1,4 +1,5 @@
-pytorch
+torch
 torchvision
 flwr
 tqdm
+albumentations
